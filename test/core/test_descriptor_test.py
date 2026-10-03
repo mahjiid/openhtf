@@ -51,6 +51,55 @@ class TestTest(parameterized.TestCase):
     mock_log.error.assert_called_once_with(
         mock.ANY, callback, RegexMatcher(r'test_descriptor_test(.|\n)*test123'))
 
+  def test_output_cb_error_can_fail_test(self):
+
+    def phase():
+      return
+
+    observed_records = []
+
+    def failing_callback(test_record):
+      del test_record
+      raise RuntimeError('storage unavailable')
+
+    def observe_callback(test_record):
+      observed_records.append(test_record)
+
+    test = test_descriptor.Test(phase)
+    test.configure(fail_on_output_callback_exception=True)
+    test.add_output_callbacks(failing_callback, observe_callback)
+
+    self.assertFalse(test.execute())
+    self.assertLen(observed_records, 1)
+    record = observed_records[0]
+    self.assertEqual(record.outcome.name, 'FAIL')
+    self.assertLen(record.outcome_details, 1)
+    self.assertEqual(record.outcome_details[0].code, 'OUTPUT_CALLBACK_ERROR')
+    self.assertIn('failing_callback', record.outcome_details[0].description)
+    self.assertIn('storage unavailable', record.outcome_details[0].description)
+
+  def test_output_cb_error_default_keeps_outcome(self):
+
+    def phase():
+      return
+
+    observed_records = []
+
+    def failing_callback(test_record):
+      del test_record
+      raise RuntimeError('storage unavailable')
+
+    def observe_callback(test_record):
+      observed_records.append(test_record)
+
+    test = test_descriptor.Test(phase)
+    test.add_output_callbacks(failing_callback, observe_callback)
+
+    self.assertTrue(test.execute())
+    self.assertLen(observed_records, 1)
+    self.assertEqual(observed_records[0].outcome.name, 'PASS')
+    self.assertEmpty(observed_records[0].outcome_details)
+
   @parameterized.named_parameters([
       {
           'testcase_name': 'trigger_none_capture_source_false',

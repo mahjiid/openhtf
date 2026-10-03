@@ -363,10 +363,18 @@ class Test(object):
         for output_cb in self._test_options.output_callbacks:
           try:
             output_cb(final_state.test_record)
-          except Exception:  # pylint: disable=broad-except
+          except Exception as error:  # pylint: disable=broad-except
             stacktrace = traceback.format_exc()
             _LOG.error('Output callback %s raised:\n%s\nContinuing anyway...',
                        output_cb, stacktrace)
+            if self._test_options.fail_on_output_callback_exception:
+              callback_name = getattr(output_cb, '__name__',
+                                      output_cb.__class__.__name__)
+              final_state.test_record.add_outcome_details(
+                  'OUTPUT_CALLBACK_ERROR',
+                  'Output callback %s raised: %s' % (callback_name, error))
+              if final_state.test_record.outcome == htf_test_record.Outcome.PASS:
+                final_state.test_record.outcome = htf_test_record.Outcome.FAIL
 
         # Make sure the final outcome of the test is printed last and in a
         # noticeable color so it doesn't get scrolled off the screen or missed.
@@ -413,6 +421,8 @@ class TestOptions(object):
   default_dut_id: The DUT ID that will be used if the start trigger and all
       subsequent phases fail to set one.
   stop_on_first_failure: Stop Test on first failed measurement.
+  fail_on_output_callback_exception: Mark PASS tests as FAIL when an output
+      callback raises, and record the callback failure in outcome_details.
   diagnosers: list of BaseTestDiagnoser subclasses to run after all the
       phases.
   """
@@ -423,6 +433,7 @@ class TestOptions(object):
   failure_exceptions = attr.ib(type=List[Type[Exception]], factory=list)
   default_dut_id = attr.ib(type=Text, default='UNKNOWN_DUT')
   stop_on_first_failure = attr.ib(type=bool, default=False)
+  fail_on_output_callback_exception = attr.ib(type=bool, default=False)
   diagnosers = attr.ib(type=List[diagnoses_lib.BaseTestDiagnoser], factory=list)
 
 
