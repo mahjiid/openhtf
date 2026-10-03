@@ -19,6 +19,7 @@ from unittest import mock
 
 from openhtf import plugs
 from openhtf.core import base_plugs
+from openhtf.core import measurements
 from openhtf.core import monitors
 from openhtf.core import phase_descriptor
 
@@ -69,6 +70,53 @@ class TestMonitors(unittest.TestCase):
         first_meas[0], 100, msg='At time 0, there should be a call made.')
     self.assertEqual(
         1, first_meas[1], msg="And it should be the monitor func's return val")
+
+  def test_measurement_with_validator(self):
+    def monitor_func(test):
+      del test
+      return 0.3
+
+    monitor_measurement = measurements.Measurement('current').in_range(0.2, 0.5)
+
+    @monitors.monitors(monitor_measurement, monitor_func)
+    def phase(test):
+      del test
+
+    self.assertEqual(1, len(phase.measurements))
+    monitored_measurement = phase.measurements[0]
+    self.assertEqual(monitored_measurement.name, 'current')
+    self.assertEqual(1, len(monitored_measurement.dimensions))
+    self.assertEqual(1, len(monitored_measurement.validators))
+
+    monitored_measurement.measured_value[0] = 0.3
+    monitored_measurement.measured_value[1] = 0.4
+    monitored_measurement.validate()
+    self.assertEqual(
+        measurements.Outcome.PASS, monitored_measurement.outcome)
+
+    monitored_measurement.measured_value[2] = 0.8
+    monitored_measurement.validate()
+    self.assertEqual(
+        measurements.Outcome.FAIL, monitored_measurement.outcome)
+
+  def test_measurement_rejects_units_argument(self):
+    def monitor_func(test):
+      del test
+      return 1
+
+    with self.assertRaises(ValueError):
+      monitors.monitors(
+          measurements.Measurement('meas'), monitor_func, units='VOLT')
+
+  def test_measurement_rejects_existing_dimensions(self):
+    def monitor_func(test):
+      del test
+      return 1
+
+    with self.assertRaises(ValueError):
+      monitors.monitors(
+          measurements.Measurement('meas').with_dimensions('index'),
+          monitor_func)
 
   def testPlugs(self):
     q = queue.Queue()

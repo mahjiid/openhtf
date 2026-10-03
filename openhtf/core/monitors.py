@@ -46,7 +46,7 @@ def MyPhase(test):
 import functools
 import inspect
 import time
-from typing import Any, Callable, Dict, Optional, Text
+from typing import Any, Callable, Dict, Optional, Text, Union
 
 import openhtf
 from openhtf import plugs
@@ -55,6 +55,7 @@ from openhtf.core import phase_descriptor
 from openhtf.core import test_state as core_test_state
 from openhtf.util import threads
 from openhtf.util import units as uom
+from openhtf.util import validators
 
 
 class _MonitorThread(threads.KillableThread):
@@ -130,13 +131,42 @@ class _MonitorThread(threads.KillableThread):
 
 
 def monitors(
-    measurement_name: Text,
+    measurement: Union[Text, measurements.Measurement],
     monitor_func: phase_descriptor.PhaseT,
     units: Optional[uom.UnitDescriptor] = None,
     poll_interval_ms: int = 1000
 ) -> Callable[[phase_descriptor.PhaseT], phase_descriptor.PhaseDescriptor]:
-  """Returns a decorator that wraps a phase with a monitor."""
+  """Returns a decorator that wraps a phase with a monitor.
+
+  Args:
+    measurement: Measurement name, or a Measurement instance. Passing a
+      Measurement allows validators and other metadata to be applied to the
+      collected samples. Scalar validators are automatically applied to every
+      monitored sample.
+    monitor_func: Function that returns each monitored value.
+    units: Units for a string-named measurement. Must not be supplied when
+      passing a Measurement instance.
+    poll_interval_ms: Approximate interval between monitor samples.
+  """
   monitor_desc = openhtf.PhaseDescriptor.wrap_or_copy(monitor_func)
+
+  if isinstance(measurement, measurements.Measurement):
+    if units is not None:
+      raise ValueError(
+          'units must be specified on the Measurement when one is provided')
+    if measurement.dimensions:
+      raise ValueError('Monitor Measurement must not already have dimensions')
+    monitor_measurement = measurement.with_args()
+    measurement_name = monitor_measurement.name
+    monitor_measurement.validators = [
+        validators.DimensionPivot(validator)
+        for validator in monitor_measurement.validators
+    ]
+    monitor_measurement.with_dimensions(uom.MILLISECOND)
+  else:
+    measurement_name = measurement
+    monitor_measurement = measurements.Measurement(
+        measurement_name).with_units(units).with_dimensions(uom.MILLISECOND)
 
   def wrapper(
       phase_func: phase_descriptor.PhaseT) -> phase_descriptor.PhaseDescriptor:
@@ -151,9 +181,7 @@ def monitors(
 
     @openhtf.PhaseOptions(requires_state=True)
     @plugs.plug(update_kwargs=False, **monitor_plugs)
-    @openhtf.measures(
-        measurements.Measurement(measurement_name).with_units(
-            units).with_dimensions(uom.MILLISECOND))
+    @openhtf.measures(monitor_measurement)
     @functools.wraps(phase_desc.func)
     def monitored_phase_func(test_state, *args, **kwargs):
       # Start monitor thread, it will run monitor_desc periodically.
